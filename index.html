@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Transcoder</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+        }
+        .input-group, .output-group {
+            margin-bottom: 20px;
+        }
+        #fileInput {
+            display: none;
+        }
+        .file-label {
+            background-color: #3498db;
+            color: #ffffff;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-block;
+            transition: background-color 0.3s ease;
+        }
+        .file-label:hover {
+            background-color: #2980b9;
+        }
+        .file-name {
+            margin-left: 10px;
+            font-style: italic;
+        }
+        button {
+            background-color: #2ecc71;
+            color: #ffffff;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #27ae60;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #ecf0f1;
+        }
+        .progress-bar {
+            width: 100%;
+            background-color: #e0e0e0;
+            padding: 3px;
+            border-radius: 3px;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, .2);
+            margin-top: 20px;
+        }
+        .progress {
+            display: block;
+            height: 22px;
+            background-color: #3498db;
+            border-radius: 3px;
+            transition: width 500ms ease-in-out;
+        }
+        #log {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        #videoPreview {
+            max-width: 100%;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Video Transcoder</h1>
+        <div class="input-group">
+            <label for="fileInput" class="file-label">Choose File</label>
+            <input type="file" id="fileInput" accept="video/*">
+            <span class="file-name" id="fileName"></span>
+        </div>
+        <div class="output-group">
+            <label for="outputFormat">Output Format:</label>
+            <select id="outputFormat">
+                <option value="webm;codecs=vp9,opus">VP9/Opus (WebM)</option>
+                <option value="webm;codecs=vp8,opus">VP8/Opus (WebM)</option>
+                <option value="mp4;codecs=h264,aac">H.264/AAC (MP4)</option>
+            </select>
+        </div>
+        <button onclick="transcode()">Transcode</button>
+        <div id="status"></div>
+        <div class="progress-bar">
+            <span class="progress" id="progress"></span>
+        </div>
+        <div id="log"></div>
+        <video id="videoPreview" controls></video>
+    </div>
+
+    <script>
+        let logElement, videoElement, mediaRecorder;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            logElement = document.getElementById('log');
+            videoElement = document.getElementById('videoPreview');
+            document.getElementById('fileInput').addEventListener('change', function(e) {
+                let fileName = e.target.files[0] ? e.target.files[0].name : 'No file chosen';
+                document.getElementById('fileName').textContent = fileName;
+                if (e.target.files[0]) {
+                    videoElement.src = URL.createObjectURL(e.target.files[0]);
+                    log(`File loaded: ${fileName}`);
+                }
+            });
+        });
+
+        function log(message) {
+            console.log(message);
+            logElement.innerHTML += message + '<br>';
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        async function transcode() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            if (!file) {
+                updateStatus('Please select a file.');
+                return;
+            }
+
+            const outputFormat = document.getElementById('outputFormat').value;
+            updateStatus('Starting transcoding process...');
+            updateProgress(0);
+            log('Transcoding started');
+
+            try {
+                const stream = videoElement.captureStream();
+                const mimeType = `video/${outputFormat}`;
+                
+                if (!MediaRecorder.isTypeSupported(mimeType)) {
+                    throw new Error(`${mimeType} is not supported in this browser.`);
+                }
+
+                mediaRecorder = new MediaRecorder(stream, { mimeType });
+                const chunks = [];
+
+                mediaRecorder.ondataavailable = e => chunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: mimeType });
+                    const extension = outputFormat.startsWith('webm') ? 'webm' : 'mp4';
+                    downloadFile(blob, `transcoded_video.${extension}`);
+                    log('Transcoding completed');
+                    updateStatus('Transcoding completed.');
+                    updateProgress(100);
+                };
+
+                videoElement.onended = () => {
+                    mediaRecorder.stop();
+                    videoElement.onended = null;
+                };
+
+                mediaRecorder.start();
+                videoElement.currentTime = 0;
+                await videoElement.play();
+
+                // Update progress based on video current time
+                const updateProgressInterval = setInterval(() => {
+                    if (videoElement.duration) {
+                        const progress = (videoElement.currentTime / videoElement.duration) * 100;
+                        updateProgress(progress);
+                        log(`Progress: ${progress.toFixed(2)}%`);
+                    }
+                }, 1000);
+
+                videoElement.onended = () => {
+                    clearInterval(updateProgressInterval);
+                    mediaRecorder.stop();
+                };
+
+            } catch (error) {
+                updateStatus(`Error: ${error.message}`);
+                updateProgress(0);
+                log(`Error occurred: ${error.message}`);
+            }
+        }
+
+        function downloadFile(blob, fileName) {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = fileName;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+
+        function updateProgress(percent) {
+            document.getElementById('progress').style.width = `${percent}%`;
+        }
+    </script>
+</body>
+</html>
